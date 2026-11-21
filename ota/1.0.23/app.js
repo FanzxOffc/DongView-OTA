@@ -399,6 +399,129 @@ async function dvCinemaWeekly(){
   }catch(e){if(target.isConnected)target.innerHTML='<div class="dv-weekly-msg">Peringkat mingguan belum tersedia. '+esc(e.message)+'</div>';}
 }
 
+/* DongView v1.0.23 — Cinema Player Experience. Authorized media only. */
+const dv23Account=()=>String(X.user()?.uid||'guest').replace(/[^a-zA-Z0-9_-]/g,'').slice(0,85);
+const dv23Key=it=>String(it?.src||'')+':'+String(it?.id||'');
+const dv23WatchStore=()=>store.get('dv23_watch_'+dv23Account(),[]);
+function dv23WatchSave(d,ep,position,duration){
+  if(!d||!ep||!Number.isFinite(position)||position<0)return;
+  const k=dv23Key(d);if(!k||k===':')return;
+  const list=dv23WatchStore().filter(x=>x.key!==k);
+  list.unshift({key:k,src:d.src,id:d.id,title:String(d.title||'Judul'),poster:String(d.poster||''),meta:String(d.meta||''),ep:String(ep.label||'Episode'),epIndex:Number(ep._index)||0,position:Math.round(position),duration:Number.isFinite(duration)?Math.round(duration):0,updated:Date.now()});
+  store.set('dv23_watch_'+dv23Account(),list.slice(0,24));
+}
+function dv23Watched(d){return dv23WatchStore().find(x=>x.key===dv23Key(d))||null}
+const dv23FollowList=()=>store.get('dv23_follow_'+dv23Account(),[]);
+const dv23IsFollowing=d=>dv23FollowList().includes(dv23Key(d));
+function dv23ToggleFollow(d){const k=dv23Key(d),a=dv23FollowList();store.set('dv23_follow_'+dv23Account(),a.includes(k)?a.filter(x=>x!==k):[...a,k].slice(0,200));return dv23IsFollowing(d)}
+const dv23Opts=()=>Object.assign({speed:1,autonext:false,reduceData:false},store.get('dv23_opts_'+dv23Account(),{}));
+function dv23SetOpt(k,value){if(!['speed','autonext','reduceData'].includes(k))return;const opts=dv23Opts();opts[k]=value;store.set('dv23_opts_'+dv23Account(),opts)}
+function dv23Time(n){const t=Math.max(0,Math.floor(Number(n)||0));return Math.floor(t/3600)?[Math.floor(t/3600),String(Math.floor(t%3600/60)).padStart(2,'0'),String(t%60).padStart(2,'0')].join(':'):[Math.floor(t/60),String(t%60).padStart(2,'0')].join(':')}
+function dv23Continue(){
+ const host=$('#dv23-home-continue');if(!host)return;
+ const rows=dv23WatchStore().slice(0,8).filter(x=>x.src&&x.id);
+ host.innerHTML=rows.length?`<section class="dv23-section"><div class="dv23-section-head"><div><span class="dv23-eyebrow">LANJUT DARI TERAKHIR</span><h2>▶ Lanjutkan Nonton</h2></div><button type="button" data-act="dv23-history-clear" class="dv23-textbutton">Hapus riwayat</button></div><div class="dv23-watch-scroll">${rows.map(x=>`<button type="button" class="dv23-watchcard" data-act="dv23-history-open" data-k="${esc(x.key)}"><span class="dv23-watchposter" style="background-image:url(&quot;${esc(x.poster)}&quot;)"><span class="dv23-playbadge">▶</span><span class="dv23-watchprogress" style="width:${x.duration?Math.min(100,Math.round(100*x.position/x.duration)):3}%"></span></span><b>${esc(x.title)}</b><small>${esc(x.ep)} · ${dv23Time(x.position)}${x.duration?' / '+dv23Time(x.duration):''}</small></button>`).join('')}</div><p class="dv23-footnote">Progres hanya tersimpan di perangkat ini, terpisah menurut akun.</p></section>`:`<section class="dv23-section"><div class="dv23-section-head"><div><span class="dv23-eyebrow">RIWAYAT PRIBADI</span><h2>▶ Lanjutkan Nonton</h2></div></div><p class="dv23-footnote">Belum ada progres menonton. Mulai video yang tersedia untuk menampilkan judul di sini.</p></section>`;
+}
+function dv23InjectHome(){const hist=$('#dv17-home-history');if(!hist)return;hist.insertAdjacentHTML('afterend','<div id="dv23-home-continue"></div>');dv23Continue();}
+function dv23LatestCards(root,items){
+  if(!root||!Array.isArray(items)||!items.length)return;
+  const area=$('#dv23-latest');if(!area)return;
+  area.innerHTML=`<div class="dv23-section-head"><div><span class="dv23-eyebrow">BARU DIPERBARUI</span><h2>Episode Terbaru</h2></div><button type="button" data-go="explore" class="dv23-textbutton">Lihat semua ›</button></div><div class="dv23-latest-grid">${items.slice(0,9).map(it=>`<button class="dv23-mini" data-act="open" data-k="${esc(key(it))}"><div class="dv23-mini-image" style="background-image:url(&quot;${esc(it.poster)}&quot;)"><span class="dv23-mini-label">${esc(String(it.meta||'UPDATE').slice(0,38))}</span></div><b>${esc(it.title)}</b><small>${esc(SRC[it.src]?.label||'Anime')}</small></button>`).join('')}</div>`;
+}
+function dv23MediaId(d){
+  const input=dv23Key(d);let h1=2166136261,h2=5381;
+  for(let i=0;i<input.length;i++){h1=Math.imul(h1^input.charCodeAt(i),16777619);h2=Math.imul(h2,33)^input.charCodeAt(i)}
+  return 'm'+(h1>>>0).toString(16).padStart(8,'0')+(h2>>>0).toString(16).padStart(8,'0');
+}
+const dv23CommentPath=d=>'features/mediaComments/'+dv23MediaId(d);
+const dv23CommentBlocked=(text)=>/https?:|www\.|\b\S+@\S+\b|(?:\d[\s-]?){7,}/i.test(text);
+async function dv23LoadComments(o){
+  const box=$('.dv23-comments-list',o),d=o?._d;if(!box||!d)return;
+  if(!X.user()){box.innerHTML='<p class="dv23-footnote">Masuk dengan Google untuk membaca dan mengirim komentar.</p>';return}
+  box.innerHTML='<p class="dv23-footnote">Memuat komentar…</p>';
+  try{
+    const rows=await X.db(dv23CommentPath(d)+'?orderBy=%22%24key%22&limitToLast=50','GET');
+    if(!box.isConnected||o._d!==d)return;
+    const u=X.user(),array=Object.entries(rows||{}).filter(([,m])=>m&&typeof m.text==='string').sort(([a],[b])=>a.localeCompare(b));
+    box.innerHTML=array.length?array.map(([id,m])=>`<article class="dv23-comment"><div class="dv23-comment-avatar">${esc(String(m.uid||'?').slice(-2).toUpperCase())}</div><div><div class="dv23-comment-meta"><b>${m.uid===u?.uid?'Kamu':'Viewer-'+esc(String(m.uid||'').slice(-5))}</b><time>${m.at?esc(new Date(Number(m.at)).toLocaleDateString('id-ID')):''}</time></div><p>${esc(m.text)}</p><div class="dv23-comment-actions"><button type="button" data-act="dv23-like" data-id="${esc(id)}" data-liked="${m.likes&&m.likes[u.uid]?'1':'0'}">♥ ${Object.keys(m.likes||{}).length}</button>${m.uid===u.uid||X.isAdmin()?`<button type="button" data-act="dv23-delete-comment" data-id="${esc(id)}">Hapus</button>`:''}</div></div></article>`).join(''):'<p class="dv23-footnote">Belum ada komentar. Jadilah yang pertama.</p>';
+    $('.dv23-comment-status',o).textContent='';
+  }catch(e){if(box.isConnected)box.innerHTML='<p class="dv23-footnote">Komentar belum tersedia. Periksa aturan Firebase mediaComments. '+esc(String(e.message||e).slice(0,100))+'</p>'}
+}
+function dv23CommentsUI(){return `<section class="dv23-comments"><div class="dv23-section-head"><div><span class="dv23-eyebrow">KOMUNITAS</span><h3>Komentar</h3></div><button type="button" data-act="dv23-refresh-comments" class="dv23-textbutton">Segarkan ↻</button></div><div class="dv23-comments-list" role="feed"><p class="dv23-footnote">Memuat komentar…</p></div><div class="dv23-comment-status" role="status"></div>${X.user()?'<form class="dv23-comment-form"><input type="text" maxlength="400" placeholder="Komentar yang sopan…" aria-label="Komentar anime" required><button type="submit">Kirim</button></form>':'<p class="dv23-footnote">Login diperlukan untuk berkomentar.</p>'}</section>`}
+async function dv23CommentAction(act,t,o){
+ const d=o?._d,u=X.user();if(!d)return;
+ if(act==='dv23-refresh-comments'){await dv23LoadComments(o);return}
+ if(!u)throw Error('Login diperlukan');
+ if(act==='dv23-delete-comment'){
+  if(!confirm('Hapus komentar ini?'))return;
+  await X.db(dv23CommentPath(d)+'/'+t.dataset.id,'DELETE');await dv23LoadComments(o);return;
+ }
+ if(act==='dv23-like'){
+   const p=dv23CommentPath(d)+'/'+t.dataset.id+'/likes/'+u.uid;
+   await X.db(p,t.dataset.liked==='1'?'DELETE':'PUT',t.dataset.liked==='1'?undefined:true);await dv23LoadComments(o);
+ }
+}
+function dv23DetailEnhance(o,d){
+ if(!o?.isConnected)return;
+ const shell=$('.sheet',o),body=$('.sb',o);shell.classList.add('dv23-sheet');
+ const buttons=$('.btns',body);if(buttons)buttons.insertAdjacentHTML('beforeend',`<button type="button" class="btn dv23-follow" data-act="dv23-follow">${dv23IsFollowing(d)?'✓ Mengikuti':'＋ Subscribe'}</button>`);
+ const current=dv23Watched(d),m=SRC[d.src].kind==='manga';
+ if(d.eps?.length&&!m){const row=$('.eps',body);if(row)row.insertAdjacentHTML('beforebegin',`<div class="dv23-episode-caption">${d.eps.length} episode tersedia dari sumber ini. ${current?'Terakhir: '+esc(current.ep)+' · '+dv23Time(current.position):''}</div>`)}
+ else if(!m){const el=$('#epl',body);if(el)el.querySelector('span:last-child').textContent='Metadata';}
+ body.insertAdjacentHTML('beforeend',`<p class="dv23-footnote">Subscribe menyimpan judul pilihan pada perangkat ini. Notifikasi rilis belum terintegrasi.</p><div class="dv23-detail-more"><section class="dv23-related"><div class="dv23-section-head"><h3>Serial Terkait</h3></div><div class="dv23-related-results"><p class="dv23-footnote">Mencari judul lain dari katalog…</p></div></section>${dv23CommentsUI()}</div>`);
+ dv23LoadComments(o);
+ const form=$('.dv23-comment-form',o);if(form)form.onsubmit=async e=>{e.preventDefault();await dv23CommentSubmit(o,form)};
+ // Related titles are suggestions from the same source, never fabricated series links.
+ SRC[d.src].list('').then(a=>{
+   if(!o.isConnected)return;
+   const target=$('.dv23-related-results',o);if(!target)return;
+   const rows=a.filter(x=>x.id&&dv23Key(x)!==dv23Key(d)).slice(0,6);
+   rows.forEach(x=>reg[key(x)]=x);
+   target.innerHTML=rows.length?`<div class="dv23-related-scroll">${rows.map(x=>`<button data-act="open" data-k="${esc(key(x))}"><img src="${esc(x.poster)}" alt="" loading="lazy"><b>${esc(x.title)}</b></button>`).join('')}</div>`:'<p class="dv23-footnote">Belum tersedia judul terkait dari sumber ini.</p>';
+ }).catch(()=>{const target=$('.dv23-related-results',o);if(target)target.innerHTML='<p class="dv23-footnote">Saran judul belum tersedia.</p>'});
+}
+function dv23PlayerOptions(o){
+ const opt=dv23Opts();return `<div class="dv23-player-config" hidden><div class="dv23-sheet-row"><h3>Pengaturan Pemutar</h3><button type="button" data-act="dv23-settings" aria-label="Tutup pengaturan">✕</button></div><label>Kecepatan <select data-dv23-opt="speed"><option value="0.75" ${opt.speed===.75?'selected':''}>0.75×</option><option value="1" ${opt.speed===1?'selected':''}>Normal 1×</option><option value="1.25" ${opt.speed===1.25?'selected':''}>1.25×</option><option value="1.5" ${opt.speed===1.5?'selected':''}>1.5×</option><option value="2" ${opt.speed===2?'selected':''}>2×</option></select></label><label class="dv23-toggle"><input data-dv23-opt="autonext" type="checkbox" ${opt.autonext?'checked':''}> Episode selanjutnya otomatis</label><p>Pengaturan hanya berlaku pada video yang dapat diputar secara langsung. Embed pihak ketiga mengikuti kontrol penyedianya.</p></div>`
+}
+function dv23PlayerEpisodeList(o){const d=o._d,index=o._epIndex||0;const host=$('.dv23-player-episodes',o);if(!host)return;
+ host.innerHTML=d?.eps?.length?d.eps.slice(0,200).map((e,i)=>`<button type="button" class="${i===index?'on':''}" data-act="dv23-player-episode" data-i="${i}">${esc(e.label||'Episode '+(i+1))}</button>`).join(''):'<p class="dv23-footnote">Daftar episode tidak disediakan sumber ini.</p>';
+ const text=$('.dv23-episode-active',o);if(text)text.textContent=d?.eps?.[index]?.label||'Episode';
+}
+function dv23DownloadUI(o,downloads){
+ const box=$('.dv23-download-list',o);if(!box)return;
+ const groups=Array.isArray(downloads)?downloads:[];
+ const valid=[];
+ for(const group of groups){for(const link of (group.links||[])){
+  try{const url=new URL(link.url);if(url.protocol==='https:')valid.push({quality:String(group.resolution||'Otomatis').slice(0,50),name:String(link.label||'Buka sumber').slice(0,80),url:url.href})}catch{}
+ }}
+ box.innerHTML=valid.length?valid.map(g=>`<a class="dv23-quality-row" href="${esc(g.url)}" target="_blank" rel="noopener noreferrer"><span>↓ ${esc(g.quality)}</span><small>${esc(g.name)} · Situs penyedia ↗</small></a>`).join(''):'<p class="dv23-footnote">Tidak ada pilihan unduhan yang diberikan oleh sumber ini. DongView tidak menyediakan atau menyalin file video.</p>';
+}
+function dv23PlayerOnVideo(o,video){
+ if(!video)return;
+ const options=dv23Opts();video.playbackRate=options.speed;
+ const saved=o._d&&dv23Watched(o._d);
+ video.addEventListener('loadedmetadata',()=>{if(saved&&saved.epIndex===o._epIndex&&saved.position>0&&saved.position<video.duration-10)video.currentTime=saved.position;dv23UpdateBar(o)});
+ let last=0;
+ video.addEventListener('timeupdate',()=>{dv23UpdateBar(o);if(Date.now()-last>5000){last=Date.now();const d=o._d;if(d)dv23WatchSave(d,{...d.eps[o._epIndex],_index:o._epIndex},video.currentTime,video.duration)}});
+ video.addEventListener('pause',()=>{const d=o._d;if(d)dv23WatchSave(d,{...d.eps[o._epIndex],_index:o._epIndex},video.currentTime,video.duration)});
+ video.addEventListener('ended',()=>{const d=o._d;if(d)dv23WatchSave(d,{...d.eps[o._epIndex],_index:o._epIndex},video.currentTime,video.duration);if(dv23Opts().autonext&&d?.eps?.[o._epIndex+1])dv23ChangeEpisode(o,o._epIndex+1)});
+ dv23UpdateBar(o);
+}
+function dv23UpdateBar(o){const video=$('.pframe video',o),bar=$('.dv23-timeline',o),label=$('.dv23-playertime',o);if(!video)return;if(label)label.textContent=dv23Time(video.currentTime)+' / '+dv23Time(video.duration);if(bar){bar.max=Number.isFinite(video.duration)&&video.duration>0?Math.round(video.duration):100;bar.value=video.currentTime||0;}}
+function dv23ChangeEpisode(o,index){if(!o?._d?.eps?.[index])return;if(o._localUrl){URL.revokeObjectURL(o._localUrl);o._localUrl='';}const d=o._d;const ep=d.eps[index];o._epIndex=index;o._title=d.title+' · '+ep.label;$('.dv23-player-title',o).textContent=o._title;dv23PlayerEpisodeList(o);o._run()}
+async function dv23PlayerAction(act,t,o){if(!o||!o.classList.contains('dv23-player'))return;
+ const v=$('.pframe video',o);
+ if(act==='dv23-player-episode'){dv23ChangeEpisode(o,Number(t.dataset.i));return}
+ if(act==='dv23-play'){if(v){if(v.paused)await v.play().catch(()=>{});else v.pause()}else dv23PlayerNotice(o,'Kontrol ini tersedia untuk video langsung.');return}
+ if(act==='dv23-rewind'||act==='dv23-forward'){if(v&&Number.isFinite(v.duration))v.currentTime=Math.max(0,Math.min(v.duration,v.currentTime+(act==='dv23-rewind'?-10:10)));else dv23PlayerNotice(o,'Maju/mundur tidak tersedia pada embed eksternal.');return}
+ if(act==='dv23-fullscreen'){const frame=$('.pframe',o);if(frame?.requestFullscreen)await frame.requestFullscreen().catch(()=>dv23PlayerNotice(o,'Fullscreen tidak didukung perangkat.'));else dv23PlayerNotice(o,'Fullscreen tidak didukung.');return}
+ if(act==='dv23-settings'){const b=$('.dv23-player-config',o);b.hidden=!b.hidden;return}
+ if(act==='dv23-download'){const b=$('.dv23-download-panel',o);b.hidden=!b.hidden;return}
+}
+function dv23PlayerNotice(o,message){const x=$('.dv23-player-status',o);if(x)x.textContent=message}
+function dv23SaveProgressOnLeave(o){const v=$('.pframe video',o),d=o?._d;if(v&&d&&d.eps?.[o._epIndex])dv23WatchSave(d,{...d.eps[o._epIndex],_index:o._epIndex},v.currentTime,v.duration);if(o?._localUrl){URL.revokeObjectURL(o._localUrl);o._localUrl=''}}
+/* End DongView v1.0.23 helpers. */
+
 /* ---------- Beranda ---------- */
 async function home(){
   main.innerHTML=`<section class="hero dv-feature-hero" id="dv-home-hero"><span class="kick">DONGVIEW · PILIHAN ANIBATCH</span><span class="pill"><i></i>PILIHAN HARI INI</span><h1 id="dv-home-title">Cerita seru,<br><em>mulai dari sini.</em></h1><p id="dv-home-meta">Temukan anime pilihan dengan AniBatch sebagai sumber utama.</p><div class="btns"><button class="btn red" id="dv-home-open" data-go="explore">Jelajahi anime</button><button class="btn" data-go="fav">♡ Pustaka</button></div><div class="foot"><span>ANIBATCH FIRST</span><span>ANIME · DONGHUA · MANGA</span></div><div class="dv-carousel-bar"><div id="dv-carousel-dots" class="dv-carousel-dots" aria-label="Slide unggulan"></div><div class="dv-carousel-buttons"><button type="button" data-act="dv-slide-prev" aria-label="Slide sebelumnya">‹</button><button type="button" data-act="dv-slide-next" aria-label="Slide berikutnya">›</button></div></div></section>
@@ -407,12 +530,15 @@ async function home(){
   <div class="sec"><div class="dv18-section"><h2><span class="dv21-section-icon mint">▶</span> Episode Terbaru · Donghua</h2><button data-act="dv18-browse" data-src="donghua">Lihat semua ›</button></div><div class="hs" id="r2">${'<div class="card"><div class="sk"></div></div>'.repeat(3)}</div></div>
   <div class="sec"><div class="dv18-section"><h2><span class="dv21-section-icon gold">✦</span> Manga Terbaru</h2><button data-go="manga">Lihat semua ›</button></div><div class="hs" id="r3">${'<div class="card"><div class="sk"></div></div>'.repeat(3)}</div></div>${copy()}`;
   dv17HomeHistory();
+  dv23InjectHome();
+  const recentAnchor=$('#r2')?.closest('.sec');if(recentAnchor)recentAnchor.insertAdjacentHTML('beforebegin','<section class="dv23-section" id="dv23-latest"></section>');
   featureBanner();
   dvCinemaWeekly();
   for(const[id,s]of[['r1','anibatch'],['r2','donghua'],['r3','shinigami']]){
     const target=$('#'+id);SRC[s].list('').then(r=>{
     if(tab!=='home'||!target.isConnected)return;
     target.innerHTML=r.slice(0,12).map(card).join('')||'<p class="sub">Belum ada judul.</p>';
+    if(s==='donghua'&&r.length)dv23LatestCards(target,r);
     if(s==='anibatch'&&r.length){dvCinemaSlidesInit(r.slice(0,6));
       const first=r[0],hero=$('#dv-home-hero'),open=$('#dv-home-open');
       if(hero){try{const url=new URL(String(first.poster||''));
@@ -423,7 +549,7 @@ async function home(){
       if(meta)meta.textContent=first.meta||'Pilihan dari AniBatch';
       if(open){open.removeAttribute('data-go');open.dataset.act='open';open.dataset.k=key(first);open.textContent='Lihat detail';}
     }
-  }).catch(e=>{if(tab==='home'&&target.isConnected)target.innerHTML=`<div class="info" style="min-width:100%">${esc(SRC[s].label)}: ${esc(e.message)}</div>`});
+  }).catch(e=>{if(tab==='home'&&target.isConnected){target.innerHTML=`<div class="info" style="min-width:100%">${esc(SRC[s].label)}: ${esc(e.message)}</div>`;if(s==='donghua'){const recent=$('#dv23-latest');if(recent)recent.innerHTML='<div class="dv23-section-head"><h2>Episode Terbaru</h2></div><p class="dv23-footnote">Pembaruan episode belum dapat dimuat dari sumber saat ini.</p>'}}});
   }
 }
 
@@ -451,7 +577,7 @@ async function load(kind,append=false){
 /* ---------- Overlay + tombol back Android ---------- */
 const OV='.ov,.player,.reader,.pvw';
 function push(html,cls){const d=document.createElement('div');d.className=cls;d.innerHTML=html;document.body.appendChild(d);history.pushState({o:1},'');return d}
-addEventListener('popstate',()=>{const l=document.querySelectorAll(OV);if(l.length)l[l.length-1].remove()});
+addEventListener('popstate',()=>{const l=document.querySelectorAll(OV);if(l.length){const v=l[l.length-1];if(v.classList.contains('dv23-player'))dv23SaveProgressOnLeave(v);v.remove()}});
 
 async function openDetail(it){
   if(!it||!SRC[it.src])return;
@@ -465,39 +591,51 @@ async function openDetail(it){
     <div class="btns" style="margin-top:14px"><button class="btn red" data-act="scroll">${['myanimelist','aniwavesmeta'].includes(d.src)?'Info katalog':m?'Pilih Chapter':'Pilih Episode / Putar'}</button><button class="btn" data-act="fav">${isFav(d)?'♥ Tersimpan':'♡ Simpan'}</button>${d.site?'<button class="btn" data-act="site">Buka Situs ↗</button>':''}</div>
     <div class="lbl" id="epl"><span>${m?'CHAPTER':'EPISODE'}</span><span>${d.eps.length}</span></div>
     ${d.eps.length?`<div class="eps ${m||d.eps[0].label.length>6?'ls':''}">`+d.eps.map((e,i)=>`<button data-act="ep" data-i="${i}">${esc(e.label)}</button>`).join('')+'</div>':'<div class="info">'+(['myanimelist','aniwavesmeta'].includes(d.src)?'Sumber ini menyediakan metadata, bukan video.':'Belum ada daftar episode.')+'</div>'}`;
+    dv23DetailEnhance(o,d);
   }catch(e){body.innerHTML=errHtml(e)}
 }
 
-async function openPlayer(S,ep,title){
-  const o=push(`<div class="pbar"><button data-act="back">‹ DONGVIEW / PLAYER</button><span class="grow"></span><button data-act="again">Ulangi</button><button class="o" data-act="ext">Buka Browser ↗</button></div><div class="pt">${esc(title)}</div><div class="pframe"><div class="loading">Memuat player…</div></div><div class="srv"></div><div class="dl" hidden></div>`,'player');
-  o._run=async()=>{
-    $('.pframe',o).innerHTML='<div class="loading">Memuat player…</div>';
-    try{
-      const r=await S.play(ep.ref),servers=Array.isArray(r)?r:r.servers||[];o._s=servers;
-      if(r.dl&&r.dl.length){const d=$('.dl',o);d.hidden=false;d.innerHTML='<b>Unduh:</b><br>'+r.dl.map(g=>esc(g.resolution)+': '+g.links.map(l=>`<a href="${esc(l.url)}" target="_blank">${esc(l.label)}</a>`).join('')).join('<br>')}
-      if(!servers.length)throw new Error('Server tidak ditemukan (episode mungkin terkunci / butuh akun di situs asal).');
-      setSrv(o,0);
-    }catch(e){$('.pframe',o).innerHTML=`<div class="err" style="color:#fff">${errHtml(e).replace('data-act="reload"','data-act="again"')}</div>`}
-  };
-  o._run();
+async function openPlayer(S,ep,title,detail=null,index=0){
+ const o=push(`<div class="dv23-player-shell"><div class="dv23-player-top"><button type="button" data-act="back">‹ Kembali</button><span>DONGVIEW · CINEMA PLAYER</span><button type="button" data-act="dv23-settings">⚙</button></div><div class="pframe"><div class="loading">Memuat pemutar…</div></div><div class="dv23-video-controls"><button type="button" data-act="dv23-rewind" aria-label="Mundur 10 detik">↶ 10</button><button type="button" data-act="dv23-play" aria-label="Putar atau jeda">▶ / ❚❚</button><button type="button" data-act="dv23-forward" aria-label="Maju 10 detik">10 ↷</button><button type="button" data-act="dv23-fullscreen" aria-label="Layar penuh">⛶</button></div><div class="dv23-timeline-wrap"><input type="range" class="dv23-timeline" min="0" max="100" value="0" step="1" aria-label="Posisi video"><span class="dv23-playertime">00:00 / 00:00</span></div><div class="dv23-player-body"><div class="dv23-eyebrow">SEKARANG DIPUTAR</div><h2 class="dv23-player-title">${esc(title)}</h2><p class="dv23-player-status" role="status">Pemutaran bergantung pada izin dan ketersediaan video dari sumber.</p><div class="dv23-player-tools"><button type="button" data-act="dv23-settings">⚙ Pengaturan</button><button type="button" data-act="dv23-download">↓ Download</button><button type="button" data-act="ext">↗ Situs sumber</button><label class="dv23-local-picker">＋ Video saya<input type="file" accept="video/*" aria-label="Pilih video milik sendiri"></label></div>${dv23PlayerOptions()}<div class="dv23-download-panel" hidden><h3>Pilihan kualitas unduhan</h3><div class="dv23-download-list"></div><p class="dv23-footnote">Unduh hanya video yang memang diizinkan untuk digunakan dan disimpan.</p></div><div class="dv23-section-head"><h3>Daftar Episode</h3><span class="dv23-episode-active"></span></div><div class="dv23-player-episodes"></div><div class="srv"></div>${dv23CommentsUI()}</div></div>`,'player dv23-player');
+ o._d=detail;o._epIndex=index;o._title=title;o._s=[];o._i=0;dv23PlayerEpisodeList(o);dv23LoadComments(o);
+ const form=$('.dv23-comment-form',o);if(form)form.onsubmit=async e=>{e.preventDefault();await dv23CommentSubmit(o,form)};
+ const localInput=$('.dv23-local-picker input',o);localInput.addEventListener('change',()=>{const file=localInput.files?.[0];if(!file)return;if(o._localUrl)URL.revokeObjectURL(o._localUrl);o._localUrl=URL.createObjectURL(file);const frame=$('.pframe',o);frame.innerHTML='<video controls playsinline preload="metadata"></video>';const video=frame.querySelector('video');video.src=o._localUrl;dv23PlayerOnVideo(o,video);dv23PlayerNotice(o,'Video lokal dipilih. File tidak diunggah ke DongView.');video.play().catch(()=>{});});
+ const timeline=$('.dv23-timeline',o);timeline.addEventListener('input',()=>{const v=$('.pframe video',o);if(v&&Number.isFinite(v.duration))v.currentTime=Number(timeline.value)});
+ $('.dv23-player-config',o).addEventListener('change',e=>{const input=e.target,k=input.dataset.dv23Opt;if(!k)return;if(k==='speed'){const v=Number(input.value);if(![.75,1,1.25,1.5,2].includes(v))return;dv23SetOpt(k,v);const vid=$('.pframe video',o);if(vid)vid.playbackRate=v}else if(k==='autonext')dv23SetOpt(k,input.checked)});
+ o._run=async()=>{
+  if(o._localUrl){URL.revokeObjectURL(o._localUrl);o._localUrl=''}
+  const currentEp=o._d?.eps?.[o._epIndex]||ep;
+  $('.pframe',o).innerHTML='<div class="loading">Memuat pemutar…</div>';dv23PlayerNotice(o,'Menghubungkan ke sumber video…');
+  try{
+   const r=await S.play(currentEp.ref);if(!o.isConnected)return;
+   const servers=Array.isArray(r)?r:Array.isArray(r?.servers)?r.servers:[];
+   o._s=servers;dv23DownloadUI(o,r?.dl||[]);
+   if(!servers.length)throw Error('Server video tidak tersedia pada sumber ini.');
+   setSrv(o,0);
+  }catch(e){if(o.isConnected){$('.pframe',o).innerHTML='<p class="dv23-frame-empty">'+esc(String(e.message||e))+'</p>';dv23PlayerNotice(o,'Gagal memuat sumber video.')}}
+ };
+ await o._run();
 }
 function setSrv(o,i){
-  const s=o._s[i];o._i=i;
-  const url=s.url||'',isMp4=/\.mp4(?:[?#]|$)/i.test(url),isHls=/\.m3u8(?:[?#]|$)/i.test(url);
-  const frame=$('.pframe',o);
-  if(!/^https?:\/\//i.test(url)){frame.innerHTML='<div class="info">URL video tidak valid. Pilih server lain.</div>';return}
-  if(s.directPage){
-    // The upstream player may forbid framing. Never attempt to bypass frame restrictions.
-    frame.innerHTML=`<div class="info" style="max-width:430px;margin:18px;text-align:center"><b>Pemutar AniBatch tidak dapat ditampilkan di dalam aplikasi.</b><p>Server pemutar membatasi iframe. Buka halaman episode langsung di browser untuk mencoba pemutaran.</p><button class="btn red" type="button" data-act="ext">Buka Pemutar di Browser ↗</button></div>`;
-    $('.srv',o).innerHTML='<span class="chip on">Halaman episode</span>';
-    return;
-  }
-  if(isHls){frame.innerHTML='<div class="info">Stream HLS (.m3u8) memerlukan dukungan player HLS. Coba server lain atau buka di browser eksternal.</div>';return}
-  frame.innerHTML=isMp4?`<video src="${esc(url)}" controls autoplay playsinline preload="metadata" referrerpolicy="origin"></video>`:`<iframe src="${esc(url)}" allowfullscreen allow="autoplay; fullscreen; encrypted-media; picture-in-picture" referrerpolicy="origin"></iframe>`;
-  const video=frame.querySelector('video');if(video)video.addEventListener('error',()=>{frame.innerHTML='<div class="info">Video gagal diputar. Server mungkin menolak akses langsung. Pilih server lain atau Buka Browser.</div>'});
-  $('.srv',o).innerHTML=o._s.map((x,j)=>`<button class="chip ${j===i?'on':''}" data-act="srv" data-i="${j}">${esc(x.name)}</button>`).join('');
+ const s=o._s?.[i];if(!s)return;o._i=i;const url=String(s.url||''),frame=$('.pframe',o),isMp4=/\.mp4(?:[?#]|$)/i.test(url),isHls=/\.m3u8(?:[?#]|$)/i.test(url);
+ const serverList=$('.srv',o);
+ if(serverList)serverList.innerHTML=o._s.map((x,j)=>`<button class="chip ${j===i?'on':''}" data-act="srv" data-i="${j}">${esc(x.name||'Server '+(j+1))}</button>`).join('');
+ if(!/^https:\/\//i.test(url)){frame.innerHTML='<p class="dv23-frame-empty">URL HTTPS sumber video tidak tersedia.</p>';return}
+ if(s.directPage){frame.innerHTML='<p class="dv23-frame-empty">Situs penyedia membatasi pemutaran dalam aplikasi. Gunakan tombol Buka Situs Sumber.</p>';dv23PlayerNotice(o,'Kontrol video langsung tidak tersedia pada halaman eksternal.');return}
+ if(isHls){frame.innerHTML='<p class="dv23-frame-empty">HLS belum didukung pemutar bawaan. Silakan pilih server lain atau situs sumber resmi.</p>';return}
+ if(isMp4){frame.innerHTML=`<video src="${esc(url)}" controls playsinline preload="metadata" referrerpolicy="origin"></video>`;const video=frame.querySelector('video');dv23PlayerOnVideo(o,video);video.addEventListener('error',()=>dv23PlayerNotice(o,'Video tidak dapat diputar. Periksa izin, koneksi, atau sumber.'));video.play().catch(()=>{});dv23PlayerNotice(o,'Kontrol episode dan progres aktif.');return}
+ frame.innerHTML=`<iframe src="${esc(url)}" allowfullscreen allow="autoplay; fullscreen; picture-in-picture" referrerpolicy="origin" title="Pemutar video eksternal"></iframe>`;
+ dv23PlayerNotice(o,'Kontrol di dalam video eksternal mengikuti penyedia.');
 }
-
+async function dv23CommentSubmit(o,form){
+ const u=authUser(),d=o._d,input=form.querySelector('input'),msg=String(input.value||'').trim(),status=$('.dv23-comment-status',o);
+ if(!d||!msg||msg.length>400)return;
+ if(dv23CommentBlocked(msg)){status.textContent='Komentar tidak boleh memuat tautan, alamat email, atau nomor kontak.';return}
+ const last=Number(store.get('dv23_comment_ts_'+u.uid,0));if(Date.now()-last<6000){status.textContent='Tunggu beberapa detik sebelum mengirim lagi.';return}
+ const btn=form.querySelector('button');btn.disabled=true;
+ try{await X.db(dv23CommentPath(d),'POST',{uid:u.uid,text:msg,at:{'.sv':'timestamp'}});input.value='';store.set('dv23_comment_ts_'+u.uid,Date.now());await dv23LoadComments(o);status.textContent='Komentar terkirim.'}
+ catch(e){status.textContent='Gagal mengirim komentar: '+String(e.message||e).slice(0,140)}finally{btn.disabled=false}
+}
 async function openReader(S,ep,title){
   const o=push(`<div class="pbar"><button data-act="back">‹ ${esc(title)} · ${esc(ep.label)}</button></div><div class="loading">Memuat halaman…</div>`,'reader');
   try{
@@ -1257,28 +1395,8 @@ const chatPath=()=>`chat18/messages/${dv18Channel}`;
 const chatAlias=u=>'Viewer-'+String(u.uid).replace(/[^a-zA-Z0-9]/g,'').slice(-6).padStart(6,'0');
 const chatBlocks=u=>{const v=store.get('dv18_blocks_'+u.uid,[]);return Array.isArray(v)?v:[]};
 function dv18ChatStop(){if(dv18ChatTimer){clearInterval(dv18ChatTimer);dv18ChatTimer=null}}
-async function dv18Chat(){
-  dv18ChatStop();
-  const u=X.user(),chLabel=DV18_CHANNELS[dv18Channel];
-  main.innerHTML=`<div class="dv23-chat-shell">
-    <header class="dv23-chat-header">
-      <button class="dv23-icon-button dv23-back" type="button" data-go="home" aria-label="Kembali ke beranda">‹</button>
-      <div class="dv23-chat-brand"><span class="dv23-section-eyebrow">DONGVIEW COMMUNITY</span><h2>Chat Global <span class="dv23-header-mark">✦</span></h2><small><span class="dv23-online-dot"></span> Obrolan publik · disegarkan setiap 5 detik</small></div>
-      <div class="dv23-chat-head-actions"><button class="dv23-icon-button" data-go="community" aria-label="Buka diskusi">${dv18Icon('community')}</button><button class="dv23-icon-button" data-act="dv18-chat-blocks" aria-label="Kelola akun yang diblokir">${dv18Icon('settings')}</button></div>
-    </header>
-    <div class="dv23-chat-channel-head"><div><span class="dv23-section-eyebrow">RUANG OBROLAN</span><strong id="dv23-chat-channel-title">${esc(chLabel)}</strong></div><span class="dv23-channel-type">PUBLIC</span></div>
-    <nav class="dv18-chat-tabs dv23-channel-pills" aria-label="Pilih kanal chat">${Object.entries(DV18_CHANNELS).map(([id,label])=>`<button type="button" class="${id===dv18Channel?'on':''}" aria-current="${id===dv18Channel?'page':'false'}" data-act="dv18-channel" data-name="${id}">${esc(label)}</button>`).join('')}</nav>
-    <div class="dv18-community-note dv23-chat-notice"><span class="dv23-notice-icon" aria-hidden="true">ⓘ</span><span>Jaga privasi. Jangan kirim nomor kontak atau data pribadi. Pesan dapat dilaporkan kepada moderator.</span></div>
-    <div class="dv23-chat-feed-wrap"><div class="dv23-chat-feed-meta"><span>PERCAKAPAN</span><span id="dv23-chat-count">Memuat...</span></div><div id="dv18-chat-feed" class="dv18-chat-feed" role="log" aria-live="off"><div class="loading">Memuat pesan…</div></div></div>
-    <div id="dv18-chat-status" role="status" class="dv18-chat-feedback dv23-chat-feedback"></div>
-    ${u?`<form id="dv18-chat-form" class="dv18-chat-compose dv23-chat-compose"><label class="dv23-compose-input"><span class="dv23-compose-plus" aria-hidden="true">✦</span><input id="dv18-chat-text" maxlength="400" placeholder="Kirim pesan ke ${esc(chLabel)}…" aria-label="Pesan chat" autocomplete="off"></label><button type="submit" aria-label="Kirim pesan">➤</button></form>`:'<div class="dv23-login-hint">Masuk dengan akun Google untuk membaca dan mengirim pesan.</div>'}
-  </div>`;
-  if(!u){$('#dv18-chat-feed').innerHTML=dv18Empty('community','Login diperlukan','Gunakan akun Google untuk mulai ngobrol.');return}
-  const form=$('#dv18-chat-form');form.onsubmit=async e=>{e.preventDefault();await dv18ChatSend(form,u)};
-  await dv18ChatRefresh();
-  if(tab==='chat'&&form.isConnected)dv18ChatTimer=setInterval(()=>{if(tab==='chat'&&!document.hidden)dv18ChatRefresh();else if(tab!=='chat')dv18ChatStop()},5000);
-}
-async function dv18ChatRefresh(){const b=$('#dv18-chat-feed'),u=X.user(),ch=dv18Channel;if(!b||!u||tab!=='chat'||dv18ChatBusy)return;dv18ChatBusy=true;try{const data=await X.db(`chat18/messages/${ch}?orderBy=%22%24key%22&limitToLast=60`,'GET');if(!b.isConnected||X.user()?.uid!==u.uid||ch!==dv18Channel)return;const blocked=chatBlocks(u),rows=Object.entries(data||{}).filter(([,m])=>m&&typeof m.text==='string'&&!blocked.includes(m.uid)).sort(([a],[b])=>a.localeCompare(b));const count=$('#dv23-chat-count');if(count)count.textContent=rows.length+' pesan terbaru';const sig=JSON.stringify(rows);if(b.dataset.sig===sig){const status=$('#dv18-chat-status');if(status)status.textContent='';return;}const atEnd=b.scrollHeight-b.scrollTop-b.clientHeight<90||!b.dataset.sig;b.dataset.sig=sig;b.innerHTML=rows.length?rows.map(([id,m])=>`<article class="dv18-chat-message ${m.uid===u.uid?'mine':''}"><div class="dv18-chat-avatar">${esc(chatAlias({uid:m.uid}).slice(-2))}</div><div class="dv18-chat-bubble"><header><b>${esc(chatAlias({uid:m.uid}))}</b><time>${m.at?esc(new Date(m.at).toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'})):''}</time></header><p>${esc(m.text)}</p><footer>${m.uid!==u.uid?`<button data-act="dv18-chat-report" data-id="${esc(id)}">Laporkan</button><button data-act="dv18-chat-block" data-uid="${esc(m.uid)}">Blokir</button>`:''}${m.uid===u.uid||X.isAdmin()?`<button data-act="dv18-chat-delete" data-id="${esc(id)}">Hapus</button>`:''}${X.isAdmin()&&m.uid!==u.uid?`<button data-act="dv18-chat-mute" data-uid="${esc(m.uid)}">Bisukan 24 jam</button>`:''}</footer></div></article>`).join(''):dv18Empty('community','Belum ada pesan','Mulai diskusi yang ramah dan sesuai topik.');if(atEnd)b.scrollTop=b.scrollHeight;const status=$('#dv18-chat-status');if(status)status.textContent='';}catch(e){if(b.isConnected){const status=$('#dv18-chat-status');if(status)status.textContent='Chat belum tersedia: '+String(e.message).slice(0,150);if(!b.dataset.sig)b.innerHTML=dv18Empty('community','Chat belum tersambung','Periksa koneksi dan aturan Firebase.')}}finally{dv18ChatBusy=false}}
+async function dv18Chat(){dv18ChatStop();const u=X.user();main.innerHTML=dv18PageTitle('<button class="dv21-back" data-go="home" aria-label="Kembali ke beranda">‹</button> Chat Global',`<button class="dv18-icon" data-go="community" aria-label="Diskusi">${dv18Icon('community')}</button><button class="dv18-icon" data-act="dv18-chat-blocks" aria-label="Blokir">${dv18Icon('settings')}</button>`)+`<div class="dv18-chat-status"><i></i> Ruang komunitas · refresh otomatis</div><div class="dv18-chat-tabs">${Object.entries(DV18_CHANNELS).map(([id,label])=>`<button class="${id===dv18Channel?'on':''}" data-act="dv18-channel" data-name="${id}">${esc(label)}</button>`).join('')}</div><div class="dv18-community-note">⚠ Jangan bagikan nomor telepon, alamat, akun pribadi, atau informasi sensitif. Laporkan pesan yang tidak sesuai.</div><div id="dv18-chat-feed" class="dv18-chat-feed" role="log" aria-live="off"><div class="loading">Memuat pesan…</div></div><div id="dv18-chat-status" role="status" class="dv18-chat-feedback"></div>${u?`<form id="dv18-chat-form" class="dv18-chat-compose"><input id="dv18-chat-text" maxlength="400" placeholder="Tulis pesan…" aria-label="Pesan chat" autocomplete="off"><button type="submit" aria-label="Kirim pesan">➤</button></form>`:'<div class="info">Masuk untuk membaca dan mengirim chat.</div>'}`;if(!u){$('#dv18-chat-feed').innerHTML=dv18Empty('community','Login diperlukan','Gunakan akun Google untuk masuk.');return}const form=$('#dv18-chat-form');form.onsubmit=async e=>{e.preventDefault();await dv18ChatSend(form,u)};await dv18ChatRefresh();if(tab==='chat'&&form.isConnected)dv18ChatTimer=setInterval(()=>{if(tab==='chat'&&!document.hidden)dv18ChatRefresh();else if(tab!=='chat')dv18ChatStop()},5000)}
+async function dv18ChatRefresh(){const b=$('#dv18-chat-feed'),u=X.user(),ch=dv18Channel;if(!b||!u||tab!=='chat'||dv18ChatBusy)return;dv18ChatBusy=true;try{const data=await X.db(`chat18/messages/${ch}?orderBy=%22%24key%22&limitToLast=60`,'GET');if(!b.isConnected||X.user()?.uid!==u.uid||ch!==dv18Channel)return;const blocked=chatBlocks(u),rows=Object.entries(data||{}).filter(([,m])=>m&&typeof m.text==='string'&&!blocked.includes(m.uid)).sort(([a],[b])=>a.localeCompare(b));const sig=JSON.stringify(rows);if(b.dataset.sig===sig){const status=$('#dv18-chat-status');if(status)status.textContent='';return;}const atEnd=b.scrollHeight-b.scrollTop-b.clientHeight<90||!b.dataset.sig;b.dataset.sig=sig;b.innerHTML=rows.length?rows.map(([id,m])=>`<article class="dv18-chat-message ${m.uid===u.uid?'mine':''}"><div class="dv18-chat-avatar">${esc(chatAlias({uid:m.uid}).slice(-2))}</div><div class="dv18-chat-bubble"><header><b>${esc(chatAlias({uid:m.uid}))}</b><time>${m.at?esc(new Date(m.at).toLocaleTimeString('id-ID',{hour:'2-digit',minute:'2-digit'})):''}</time></header><p>${esc(m.text)}</p><footer>${m.uid!==u.uid?`<button data-act="dv18-chat-report" data-id="${esc(id)}">Laporkan</button><button data-act="dv18-chat-block" data-uid="${esc(m.uid)}">Blokir</button>`:''}${m.uid===u.uid||X.isAdmin()?`<button data-act="dv18-chat-delete" data-id="${esc(id)}">Hapus</button>`:''}${X.isAdmin()&&m.uid!==u.uid?`<button data-act="dv18-chat-mute" data-uid="${esc(m.uid)}">Bisukan 24 jam</button>`:''}</footer></div></article>`).join(''):dv18Empty('community','Belum ada pesan','Mulai diskusi yang ramah dan sesuai topik.');if(atEnd)b.scrollTop=b.scrollHeight;const status=$('#dv18-chat-status');if(status)status.textContent='';}catch(e){if(b.isConnected){const status=$('#dv18-chat-status');if(status)status.textContent='Chat belum tersedia: '+String(e.message).slice(0,150);if(!b.dataset.sig)b.innerHTML=dv18Empty('community','Chat belum tersambung','Periksa koneksi dan aturan Firebase.')}}finally{dv18ChatBusy=false}}
 async function dv18ChatSend(form,u){const input=$('#dv18-chat-text',form),btn=$('button',form),status=$('#dv18-chat-status'),text=input.value.trim();if(!text||btn.disabled||X.user()?.uid!==u.uid)return;if(/https?:|www\.|\b\S+@\S+\b|(?:\d[\s-]?){7,}/i.test(text)){status.textContent='Jangan kirim tautan atau nomor kontak di chat.';return}const last=store.get('dv18_chat_last_'+u.uid,0);if(Date.now()-last<3000){status.textContent='Tunggu beberapa detik sebelum mengirim lagi.';return}btn.disabled=true;try{await X.db(chatPath(),'POST',{uid:u.uid,text,at:{'.sv':'timestamp'}});store.set('dv18_chat_last_'+u.uid,Date.now());input.value='';if(status.isConnected)status.textContent='Pesan terkirim';await dv18ChatRefresh()}catch(e){if(status.isConnected)status.textContent='Gagal mengirim: '+String(e.message).slice(0,150)}finally{btn.disabled=false}}
 async function dv18ChatAction(act,t){const u=authUser();switch(act){case'dv18-channel':if(DV18_CHANNELS[t.dataset.name]){dv18Channel=t.dataset.name;await dv18Chat()}break;case'dv18-chat-report':if(confirm('Laporkan pesan ini ke moderator?')){await X.db(`chat18/reports/${u.uid}/${dv18Channel}/${t.dataset.id}`,'PUT',{at:{'.sv':'timestamp'},reason:'Konten chat tidak sesuai'});alert('Laporan terkirim')}break;case'dv18-chat-block':{const uid=t.dataset.uid;if(uid&&uid!==u.uid&&confirm('Sembunyikan pesan akun ini?')){store.set('dv18_blocks_'+u.uid,[...new Set([...chatBlocks(u),uid])]);await dv18ChatRefresh()}break}case'dv18-chat-blocks':{const a=chatBlocks(u);if(a.length&&confirm('Buka blokir semua '+a.length+' akun yang disembunyikan?')){store.set('dv18_blocks_'+u.uid,[]);await dv18ChatRefresh()}else if(!a.length)alert('Tidak ada akun yang diblokir.');break}case'dv18-chat-delete':if(confirm('Hapus pesan ini?')){await X.db(chatPath()+'/'+t.dataset.id,'DELETE');await dv18ChatRefresh()}break;case'dv18-chat-mute':if(X.isAdmin()&&confirm('Bisukan pengguna ini selama 24 jam?')){await X.db('chat18/mutes/'+t.dataset.uid,'PUT',{until:Date.now()+86400000});alert('Pengguna dibisukan.')}break;}}
 async function dv18Moderation(b){if(!X.isAdmin()){b.textContent='Hanya moderator';return}b.innerHTML='<div class="loading">Memuat laporan…</div>';try{const data=await X.db('chat18/reports','GET');const reports=[];for(const [reporter,chs] of Object.entries(data||{}))for(const [channel,msgs] of Object.entries(chs||{}))if(DV18_CHANNELS[channel])for(const [id,r] of Object.entries(msgs||{}))reports.push({reporter,channel,id,at:r.at});reports.sort((a,b)=>b.at-a.at);const rows=await Promise.all(reports.slice(0,25).map(async r=>({...r,message:await X.db('chat18/messages/'+r.channel+'/'+r.id,'GET').catch(()=>null)})));if(!b.isConnected)return;b.innerHTML=rows.length?rows.map(r=>`<div class="dv17-panel"><h3>${esc(DV18_CHANNELS[r.channel])}</h3><small>${featureDate(r.at)}</small><p>${esc(r.message?.text||'Pesan sudah tidak tersedia')}</p>${['delete','dismiss'].map((a,i)=>`<button class="btn sm ${i?'':'red'}" data-act="dv18-mod-${a}" data-reporter="${esc(r.reporter)}" data-channel="${esc(r.channel)}" data-id="${esc(r.id)}">${i?'Tutup laporan':'Hapus pesan'}</button>`).join(' ')}</div>`).join(''):dv18Empty('security','Tidak ada laporan','Laporan chat yang masuk muncul di sini.')}catch(e){if(b.isConnected)b.textContent='Gagal memuat laporan: '+e.message}}
@@ -1298,33 +1416,11 @@ function dv18MalSettings(b){b.innerHTML=`<div class="dv17-panel"><h3>Metadata My
 let dv18Room=null,dv18RoomTimer=null,dv18RoomUrl='',dv18RoomBusy=false;
 const dv18RoomCode=()=>Array.from(crypto.getRandomValues(new Uint8Array(6)),x=>x.toString(16).padStart(2,'0')).join('').toUpperCase();
 function dv18RoomStop(){if(dv18RoomTimer){clearInterval(dv18RoomTimer);dv18RoomTimer=null}if(dv18RoomUrl){URL.revokeObjectURL(dv18RoomUrl);dv18RoomUrl=''}}
-function dv18RoomLobby(){
-  dv18RoomStop();dv18Room=null;
-  main.innerHTML=`<div class="dv23-room-shell">
-    <header class="dv23-room-header"><button class="dv23-icon-button dv23-back" data-go="home" aria-label="Kembali ke beranda">‹</button><div><span class="dv23-section-eyebrow">DONGVIEW TOGETHER</span><h2>Nobar <span>✦</span></h2></div><span class="dv23-room-beta">BETA</span></header>
-    <section class="dv23-room-hero"><span class="dv23-hero-tag">WATCH TOGETHER</span><div class="dv23-room-hero-art" aria-hidden="true"><span>▶</span><i></i></div><h3>Nonton bareng,<br><em>tetap dekat.</em></h3><p>Sinkronkan kendali pemutaran bersama teman, tanpa mengunggah videomu ke server.</p><div class="dv23-room-hero-meta"><span>◆ Ruang privat</span><span>◷ Maks. 2 jam</span></div></section>
-    <div class="dv23-room-actions"><section class="dv23-room-card dv23-host-card"><div class="dv23-room-card-title"><span class="dv23-room-card-icon">＋</span><div><small>JADI HOST</small><h3>Buat ruang baru</h3></div></div><p>Buat kode undangan unik untuk dibagikan secara privat kepada temanmu.</p><button class="dv23-room-primary" data-act="dv18-room-create">Buat ruang <span aria-hidden="true">↗</span></button></section>
-    <section class="dv23-room-card dv23-join-card"><div class="dv23-room-card-title"><span class="dv23-room-card-icon">⌁</span><div><small>SUDAH ADA KODE?</small><h3>Gabung ruang</h3></div></div><p>Masukkan kode 12 karakter yang diberikan oleh host ruang.</p><label for="dv18-room-code" class="dv23-code-label">KODE UNDANGAN</label><input id="dv18-room-code" maxlength="12" placeholder="XXXXXXXXXXXX" autocomplete="off" spellcheck="false" autocapitalize="characters" aria-label="Kode ruang"><button class="dv23-room-secondary" data-act="dv18-room-join">Gabung sekarang <span aria-hidden="true">→</span></button></section></div>
-    <p class="dv23-room-footnote">ⓘ Semua peserta memilih file video lokal yang sama dan memiliki hak untuk memutarnya. Kode ruang tidak boleh dibagikan secara publik.</p>
-  </div>`;
-}
-async function dv18RoomOpen(code,host){
-  dv18RoomStop();const u=authUser();dv18Room={code,host,uid:u.uid};
-  main.innerHTML=`<div class="dv23-room-shell dv23-room-active">
-    <header class="dv23-room-header"><button class="dv23-icon-button dv23-back" data-act="dv18-room-leave" aria-label="Keluar dari ruang">‹</button><div><span class="dv23-section-eyebrow">WATCH PARTY</span><h2>Ruang Nobar</h2></div><button class="dv23-leave" data-act="dv18-room-leave">Keluar</button></header>
-    <section class="dv23-room-session"><div class="dv23-room-session-head"><span class="dv23-room-role">${host?'HOST':'PESERTA'}</span><span class="dv23-room-live"><i></i> RUANG AKTIF</span></div><div class="dv23-room-code-row"><div><small>KODE UNDANGAN</small><strong id="dv23-room-display-code">${esc(code)}</strong></div><button class="dv23-room-copy" data-act="dv18-room-copy" aria-label="Salin kode ruang">Salin kode</button></div><p>${host?'Bagikan kode hanya kepada teman yang kamu percaya.':'Kontrol video mengikuti pemutaran host.'}</p></section>
-    <section class="dv23-room-theater"><div class="dv23-theater-head"><div><span class="dv23-section-eyebrow">PRIVATE SCREENING</span><h3>Pemutar bersama</h3></div><span class="dv23-video-tag">VIDEO LOKAL</span></div><div class="dv23-player-frame"><video id="dv18-room-video" controls playsinline preload="metadata" aria-label="Pemutar video Nobar"></video><div class="dv23-player-mark" aria-hidden="true">DONGVIEW</div></div><label class="dv23-video-picker" for="dv18-room-file"><span class="dv23-picker-icon">＋</span><span><strong>Pilih video dari perangkat</strong><small>File tidak diunggah ke server</small></span><input id="dv18-room-file" type="file" accept="video/*" aria-label="Pilih video lokal"></label><div class="dv23-playback-status"><span class="dv23-online-dot"></span><p id="dv18-room-info" role="status">Pilih file video yang sama dengan peserta lainnya.</p></div>${host?'':'<button class="dv23-room-primary dv23-sync" data-act="dv18-room-sync">↻ Sinkronkan dengan host</button>'}</section>
-    <div class="dv23-room-footnote">ⓘ Ruang maksimal 2 jam. Hanya status pemutaran yang disinkronkan, bukan file video.</div>
-  </div>`;
-  const video=$('#dv18-room-video'),input=$('#dv18-room-file');
-  input.onchange=()=>{if(dv18RoomUrl)URL.revokeObjectURL(dv18RoomUrl);const file=input.files?.[0];if(!file)return;dv18RoomUrl=URL.createObjectURL(file);video.src=dv18RoomUrl;video.load()};
-  if(host){for(const event of ['play','pause','seeked'])video.addEventListener(event,()=>dv18RoomPublish())}
-  await dv18RoomRefresh();
-  if(tab==='nobar'&&video.isConnected)dv18RoomTimer=setInterval(()=>{if(tab==='nobar'&&!document.hidden)dv18RoomRefresh()},3000);
-}
+function dv18RoomLobby(){dv18RoomStop();dv18Room=null;main.innerHTML=dv18PageTitle('Nobar','')+`<div class="dv17-panel"><h3>Ruang privat</h3><p>Undang teman yang kamu kenal. Setiap peserta memilih video lokal yang sama dan berhak mereka gunakan. Video tidak diunggah ke DongView.</p><button class="btn red" data-act="dv18-room-create">Buat ruang</button></div><div class="dv17-panel"><h3>Gabung ruang</h3><div class="fld"><input id="dv18-room-code" maxlength="12" placeholder="Kode 12 karakter" autocomplete="off" aria-label="Kode ruang"></div><button class="btn" data-act="dv18-room-join">Gabung</button><p>Ruang berlaku maksimal 2 jam. Jangan bagikan kode ke publik.</p></div>`}
+async function dv18RoomOpen(code,host){dv18RoomStop();const u=authUser();dv18Room={code,host,uid:u.uid};main.innerHTML=dv18PageTitle('Nobar',`<button class="btn sm" data-act="dv18-room-leave">Keluar</button>`)+`<div class="dv17-panel"><h3>${esc(code)}</h3><p>${host?'Host · bagikan kode ke teman tepercaya':'Peserta · posisi mengikuti host'}</p><label class="dv18-menurow">Pilih video lokal <input id="dv18-room-file" type="file" accept="video/*" aria-label="Pilih video lokal"></label><video id="dv18-room-video" controls playsinline preload="metadata"></video><p id="dv18-room-info" role="status">Pilih file video yang sama dengan peserta lainnya.</p>${host?'':'<button class="btn" data-act="dv18-room-sync">Sinkronkan</button>'}</div>`;const video=$('#dv18-room-video'),input=$('#dv18-room-file');input.onchange=()=>{if(dv18RoomUrl)URL.revokeObjectURL(dv18RoomUrl);const file=input.files?.[0];if(!file)return;dv18RoomUrl=URL.createObjectURL(file);video.src=dv18RoomUrl;video.load();};if(host){for(const event of ['play','pause','seeked'])video.addEventListener(event,()=>dv18RoomPublish());}await dv18RoomRefresh();if(tab==='nobar'&&video.isConnected)dv18RoomTimer=setInterval(()=>{if(tab==='nobar'&&!document.hidden)dv18RoomRefresh()},3000)}
 async function dv18RoomPublish(){const room=dv18Room,v=$('#dv18-room-video');if(!room?.host||!v?.src||!v.isConnected||!Number.isFinite(v.currentTime)||X.user()?.uid!==room.uid)return;try{await X.db('chat18/rooms/'+room.code+'/state','PUT',{position:Math.max(0,v.currentTime),playing:!v.paused,at:{'.sv':'timestamp'}})}catch(e){const b=$('#dv18-room-info');if(b&&dv18Room===room)b.textContent='Gagal menyinkronkan: '+e.message}}
 async function dv18RoomRefresh(){const room=dv18Room,v=$('#dv18-room-video'),b=$('#dv18-room-info');if(!room||!v||dv18RoomBusy||X.user()?.uid!==room.uid)return;dv18RoomBusy=true;try{const d=await X.db('chat18/rooms/'+room.code,'GET');if(dv18Room!==room||!b.isConnected)return;if(!d){dv18RoomLobby();return}if(Date.now()-d.createdAt>7200000){dv18RoomLobby();return}const s=d.state;if(room.host){b.textContent='Ruang aktif · '+Object.keys(d.members||{}).length+' peserta';return}if(!s||!v.src||v.readyState<1){b.textContent='Pilih video lokal yang sama, lalu tekan Sinkronkan.';return}const target=Math.max(0,Number(s.position)+(s.playing?Math.max(0,(Date.now()-Number(s.at))/1000):0));if(Number.isFinite(target)&&Math.abs(v.currentTime-target)>2.5)v.currentTime=Number.isFinite(v.duration)?Math.min(target,v.duration):target;if(!s.playing&&!v.paused)v.pause();if(s.playing&&v.paused)try{await v.play()}catch{b.textContent='Tekan play atau Sinkronkan untuk mengizinkan playback.';return}b.textContent=s.playing?'Mengikuti host · diputar':'Mengikuti host · dijeda'}catch(e){if(b.isConnected&&dv18Room===room)b.textContent='Ruang tidak tersedia: '+String(e.message).slice(0,100)}finally{dv18RoomBusy=false}}
-async function dv18RoomAction(act,t){const u=authUser();if(act==='dv18-room-copy'){const code=dv18Room?.code;if(!code)return;try{if(!navigator.clipboard?.writeText)throw Error('no clipboard');await navigator.clipboard.writeText(code);t.textContent='Tersalin ✓';setTimeout(()=>{if(t.isConnected)t.textContent='Salin kode'},1800)}catch{prompt('Salin kode ruang:',code)}return}if(act==='dv18-room-create'){t.disabled=true;try{const code=dv18RoomCode();await X.db('chat18/rooms/'+code,'PUT',{host:u.uid,createdAt:{'.sv':'timestamp'},members:{[u.uid]:true},state:{position:0,playing:false,at:{'.sv':'timestamp'}}});await dv18RoomOpen(code,true)}finally{t.disabled=false}}else if(act==='dv18-room-join'){const code=$('#dv18-room-code').value.trim().toUpperCase();if(!/^[A-F0-9]{12}$/.test(code))throw Error('Kode ruang tidak valid');t.disabled=true;try{await X.db('chat18/rooms/'+code+'/members/'+u.uid,'PUT',true);const d=await X.db('chat18/rooms/'+code,'GET');if(!d)throw Error('Ruang tidak tersedia');await dv18RoomOpen(code,d.host===u.uid)}finally{t.disabled=false}}else if(act==='dv18-room-leave'){const r=dv18Room;if(r){await X.db('chat18/rooms/'+r.code+(r.host?'':'/members/'+u.uid),'DELETE');dv18RoomLobby()}}else if(act==='dv18-room-sync'){const v=$('#dv18-room-video');if(v?.src)await v.play().catch(()=>{});await dv18RoomRefresh()}}
+async function dv18RoomAction(act,t){const u=authUser();if(act==='dv18-room-create'){t.disabled=true;try{const code=dv18RoomCode();await X.db('chat18/rooms/'+code,'PUT',{host:u.uid,createdAt:{'.sv':'timestamp'},members:{[u.uid]:true},state:{position:0,playing:false,at:{'.sv':'timestamp'}}});await dv18RoomOpen(code,true)}finally{t.disabled=false}}else if(act==='dv18-room-join'){const code=$('#dv18-room-code').value.trim().toUpperCase();if(!/^[A-F0-9]{12}$/.test(code))throw Error('Kode ruang tidak valid');t.disabled=true;try{await X.db('chat18/rooms/'+code+'/members/'+u.uid,'PUT',true);const d=await X.db('chat18/rooms/'+code,'GET');if(!d)throw Error('Ruang tidak tersedia');await dv18RoomOpen(code,d.host===u.uid)}finally{t.disabled=false}}else if(act==='dv18-room-leave'){const r=dv18Room;if(r){await X.db('chat18/rooms/'+r.code+(r.host?'':'/members/'+u.uid),'DELETE');dv18RoomLobby()}}else if(act==='dv18-room-sync'){const v=$('#dv18-room-video');if(v?.src)await v.play().catch(()=>{});await dv18RoomRefresh()}}
 
 /* ---------- event delegation ---------- */
 document.addEventListener('click',async e=>{
@@ -1332,6 +1428,16 @@ document.addEventListener('click',async e=>{
   if(e.target.classList.contains('ov')){history.back();return}
   const t=e.target.closest('[data-act]');if(!t)return;
   const act=t.dataset.act,ov=t.closest(OV),d=ov&&ov._d;
+  if(act.startsWith('dv23-')){
+    try{
+      if(act==='dv23-history-clear'){if(confirm('Hapus riwayat menonton akun ini dari perangkat?')){store.set('dv23_watch_'+dv23Account(),[]);dv23Continue()}return}
+      if(act==='dv23-history-open'){const x=dv23WatchStore().find(y=>y.key===t.dataset.k);if(x){const it={src:x.src,id:x.id,title:x.title,poster:x.poster,meta:x.meta};reg[key(it)]=it;openDetail(it)}return}
+      if(act==='dv23-follow'){if(d){t.textContent=dv23ToggleFollow(d)?'✓ Mengikuti':'＋ Subscribe'}return}
+      if(act==='dv23-refresh-comments'||act==='dv23-delete-comment'||act==='dv23-like'){await dv23CommentAction(act,t,ov);return}
+      if(ov?.classList.contains('dv23-player')){await dv23PlayerAction(act,t,ov);return}
+    }catch(err){const status=ov&&$('.dv23-comment-status',ov);if(status)status.textContent=String(err.message||err).slice(0,180);else alert(String(err.message||err))}
+    return;
+  }
   if(act.startsWith('dv18-')){await dv18Action(act,t);return}
   if(act.startsWith('dvf-')){await featureAction(act,t);return}
   switch(act){
@@ -1352,10 +1458,10 @@ document.addEventListener('click',async e=>{
     case'scroll':$('#epl',ov).scrollIntoView({behavior:document.documentElement.dataset.dv17Motion==='reduce'||matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});break;
     case'fav':toggleFav(d);t.textContent=isFav(d)?'♥ Tersimpan':'♡ Simpan';if(tab==='fav')dv18Library();break;
     case'site':window.open(d.site,'_system');break;
-    case'ep':{const S=SRC[d.src],ep=d.eps[+t.dataset.i];S.kind==='manga'?openReader(S,ep,d.title):openPlayer(S,ep,d.title+' · '+ep.label);break}
+    case'ep':{const S=SRC[d.src],index=+t.dataset.i,ep=d.eps[index];S.kind==='manga'?openReader(S,ep,d.title):openPlayer(S,ep,d.title+' · '+ep.label,d,index);break}
     case'srv':setSrv(ov,+t.dataset.i);break;
     case'again':ov._run();break;
-    case'ext':if(ov._s&&ov._s.length)window.open(ov._s[ov._i||0].url,'_system');break;
+    case'ext':if(ov._s&&ov._s.length)window.open(ov._s[ov._i||0].url,'_system','noopener,noreferrer');break;
     case'login':{try{await X.login()}catch(x){authErr=x.message;render()}break}
     case'logout':X.logout();document.querySelectorAll(OV).forEach(n=>n.remove());break;
     case'recheck':{const done=busy(t,'…');await refresh();done();break}
